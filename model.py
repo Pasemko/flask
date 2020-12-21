@@ -2,8 +2,9 @@ from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table
 from sqlalchemy.orm import scoped_session, sessionmaker, relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
 
-engine = create_engine('postgres://postgres:nastya@localhost:5432/postgres')
-db_session = scoped_session(sessionmaker(bind=engine))
+engine = create_engine('postgresql://postgres:admin@localhost:5432/postgres')
+Session = sessionmaker(bind=engine)
+db_session = scoped_session(Session)
 
 Base = declarative_base()
 # Base.metadata.create_all(engine)
@@ -20,9 +21,11 @@ Base = declarative_base()
 
 # users=relationship(User, secondary=author_article, lazy="subquery", backref=backref("articles", lazy=True))
 
+
 class User(Base):
 
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True)
     username = Column(String, nullable=False)
     name = Column(String)
@@ -31,6 +34,9 @@ class User(Base):
     password = Column(String)
     is_moderator = Column(Boolean)
 
+    articles = relationship('Article', back_populates='author', cascade="all, delete", passive_deletes=True)
+    changed_articles = relationship('ArticleChange', back_populates='author', cascade="all, delete", passive_deletes=True)
+
 
 class Article(Base):
     __tablename__ = "articles"
@@ -38,8 +44,9 @@ class Article(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(100))
     text = Column(Text)
-    author_id = Column(ForeignKey(User.id))
-    author = relationship(User, backref="articles", lazy=False)
+    author_id = Column(Integer, ForeignKey(User.id, ondelete="CASCADE"))
+    author = relationship('User', back_populates='articles', lazy=False)
+    changes = relationship('ArticleChange', back_populates='article', cascade="all, delete", passive_deletes=True)
 
 
 class ArticleChange(Base):
@@ -48,8 +55,8 @@ class ArticleChange(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(100))
     text = Column(String)
-    author_id = Column(ForeignKey(User.id))
-    author = relationship(User, backref="article_changes", lazy=False)
-    article_id = Column(ForeignKey(Article.id))
-    article = relationship(Article, backref="article_changes", lazy=False)
+    author_id = Column(Integer, ForeignKey(User.id, ondelete="CASCADE"))
+    author = relationship('User', back_populates='changed_articles', lazy=False)
+    article_id = Column(Integer, ForeignKey(Article.id, ondelete="CASCADE"))
+    article = relationship(Article, back_populates='changes', lazy=False)
 
