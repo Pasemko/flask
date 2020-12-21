@@ -17,7 +17,10 @@ CREATE TABLE articles
     title       VARCHAR NOT NULL,
     text        VARCHAR NOT NULL,
     author_id   INTEGER NOT NULL,
-    FOREIGN KEY (author_id) REFERENCES users (id),
+
+    FOREIGN KEY (author_id)
+        REFERENCES users (id)
+        ON DELETE CASCADE,
     PRIMARY KEY (id)
 );
 
@@ -27,9 +30,16 @@ CREATE TABLE article_changes
     title       VARCHAR NOT NULL,
     text        VARCHAR NOT NULL,
     article_id   INTEGER NOT NULL,
-    author_id   INTEGER NOT NULL,
-    FOREIGN KEY (article_id) REFERENCES articles (id),
-    FOREIGN KEY (author_id) REFERENCES users (id),
+    author_id   INTEGER,
+
+    FOREIGN KEY (article_id)
+        REFERENCES articles (id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (author_id)
+        REFERENCES users (id)
+        ON DELETE CASCADE,
+
     PRIMARY KEY (id)
 );
 
