@@ -9,7 +9,7 @@ class UserSchema(Schema):
     surname = fields.Str()
     email = fields.Str()
     password = fields.Str()
-    is_moderator = fields.Bool()
+    is_moderator = fields.Bool(default=False)
 
     @post_load
     def create_user(self, data, **kwargs):
@@ -20,7 +20,7 @@ class ArticleSchema(Schema):
     id = fields.Int()
     title = fields.Str()
     text = fields.Str()
-    author_id = fields.Str()
+    author_id = fields.Int()
 
     @post_load
     def create_article(self, data, **kwargs):
@@ -31,7 +31,7 @@ class ArticleChangeSchema(Schema):
     id = fields.Int()
     title = fields.Str()
     text = fields.Str()
-    author_id = fields.Str()
+    author_id = fields.Int()
     article_id = fields.Int()
 
     @post_load

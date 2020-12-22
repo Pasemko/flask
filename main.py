@@ -4,7 +4,7 @@ from flask_bcrypt import Bcrypt
 from model import Article, User, ArticleChange, Session
 from schemas import UserSchema, ArticleSchema, ArticleChangeSchema
 from marshmallow import ValidationError
-
+from flask_httpauth import HTTPBasicAuth
 
 variant = list(product(
     ('python 3.8.*', 'python 3.7.*', 'python 3.6.*'),
@@ -13,6 +13,7 @@ variant = list(product(
 main = Flask(__name__)
 bcrypt = Bcrypt(main)
 session = Session()
+auth = HTTPBasicAuth()
 
 
 @main.route('/api/v1/hello-world-<string:var>')
@@ -20,43 +21,38 @@ def hello(var):
     return f'Hello World {var}'
 
 
-def generate_unique_id(obj):
-    obj_id_list = [i.id for i in list(session.query(obj).all())]
-    if obj_id_list is []:
-        return 1
-    return list(set(list(range(1, max(obj_id_list) + 2))) - set(obj_id_list))[0]
+@auth.verify_password
+def verify_password(username, password):
+    found_user = session.query(User).filter_by(username=username).one_or_none()
+
+    if found_user is not None and bcrypt.check_password_hash(found_user.password, password):
+        return found_user
 
 
 @main.route('/user', methods=['POST'])
 def create_user():
-    data = request.json
-    user_schema = UserSchema()
-    parsed_data = {
-        'username': data['username'],
-        'name': data['name'],
-        'surname': data['surname'],
-        'email': data['email'],
-        'password': bcrypt.generate_password_hash(data['password']).decode('utf-8'),
-    }
-
-    if not session.query(User).filter(User.username == parsed_data['username']).one_or_none() is None:
-        return 'SUCH USERNAME ALREADY EXIST', '400'
-
     try:
-        user = user_schema.load(parsed_data)
+        user = UserSchema().load(request.json)
     except ValidationError as error:
         return error.messages, '400'
-    user.id = generate_unique_id(User)
+
+    if session.query(User).filter(User.username == user.username).one_or_none() is not None:
+        return 'SUCH USERNAME ALREADY EXIST', '400'
+
     user.is_moderator = False
+    user.password = bcrypt.generate_password_hash(request.json['password']).decode('utf-8')
+
     session.add(user)
     session.commit()
 
-    return '200'
+    return '', '200'
 
 
 @main.route('/user/<user_id>', methods=['GET'])
+@auth.login_required
 def get_user(user_id):
-    found_user = session.query(User).filter(User.id == user_id).one_or_none()
+    user_id = int(user_id)
+    found_user = session.query(User).filter_by(id=user_id).one_or_none()
 
     try:
         user = UserSchema(exclude=['password']).dump(found_user)
@@ -66,28 +62,41 @@ def get_user(user_id):
     if found_user is None:
         return 'USER NOT FOUND', '404'
 
+    if found_user.id != auth.current_user().id:
+        return 'You don\'t have required permission', '401'
+
     return user, '200'
 
 
 @main.route('/user/<user_id>', methods=['DELETE'])
+@auth.login_required
 def delete_user(user_id):
+    if auth.current_user().id != user_id:
+        return 'You can\'t delete this user!', '401'
+
     found_user = session.query(User).filter(User.id == user_id).one_or_none()
+
+    if found_user is None:
+        return 'USER NOT FOUND', '404'
 
     try:
         UserSchema().dump(found_user)
     except ValidationError as error:
         return error.messages, 'INVALID ID', '400'
 
-    if found_user is None:
-        return 'USER NOT FOUND', '404'
-
     session.delete(found_user)
     session.commit()
-    return '200'
+    return '', '200'
 
 
 @main.route('/user/<user_id>', methods=['PUT'])
+@auth.login_required
 def edit_user(user_id):
+    user_id = int(user_id)
+
+    if auth.current_user().id != user_id:
+        return 'You can\'t update this user!', '401'
+
     found_user = session.query(User).filter(User.id == user_id).one_or_none()
 
     if found_user is None:
@@ -111,19 +120,8 @@ def edit_user(user_id):
     return UserSchema(exclude=['password']).dump(found_user), '200'
 
 
-@main.route('/user/login', methods=['GET'])
-def login():
-    pass    # TODO
-
-
-@main.route('/user/logout', methods=['GET'])
-def logout():
-    pass    # TODO
-
-
 @main.route('/articles', methods=['GET'])
 def articles():
-
     article_list = session.query(Article).filter(Article.title != 'MOD REVIEW')
     if article_list:
         return jsonify(ArticleSchema(many=True).dump(article_list)), '200'
@@ -147,6 +145,7 @@ def get_article(article_id):
 
 
 @main.route('/articles/<article_id>', methods=['DELETE'])
+@auth.login_required
 def delete_article(article_id):
     found_article = session.query(Article).filter(Article.id == article_id).one_or_none()
 
@@ -158,17 +157,21 @@ def delete_article(article_id):
     if found_article is None:
         return 'ARTICLE NOT FOUND', '404'
 
+    if not auth.current_user().is_moderator and found_article.author != auth.current_user():
+        return 'You don\'t have permission to delete article', '401'
+
     session.delete(found_article)
     session.commit()
     return ''
 
 
-# TODO: ArticleChanges must be visible for moderators and author only:
-#  If not modefrator or author needed to return 401 ERROR
-
 @main.route('/articleChanges', methods=['GET'])
+@auth.login_required
 def articles_changes():
     article_changes_list = session.query(ArticleChange)
+    if not auth.current_user().is_moderator:
+        article_changes_list.filter_by(author=auth.current_user())
+
     if article_changes_list:
         return jsonify(ArticleSchema(many=True).dump(article_changes_list)), '200'
     else:
@@ -176,6 +179,7 @@ def articles_changes():
 
 
 @main.route('/articleChanges', methods=['POST'])
+@auth.login_required
 def create_article_changes():
     data = request.json
     article_change_schema = ArticleChangeSchema()
@@ -183,24 +187,24 @@ def create_article_changes():
         'title': data['title'],
         'text': data['text'],
         'author_id': data['author_id'],
-        'article_id': data['article_id'],   # If u wanna create new article put here '-1'!
+        'article_id': data['article_id'],  # If u wanna create new article put here '-1'!
     }
 
-    if not session.query(Article).filter(Article.title == parsed_data['title'] and Article.title != 'MOD REVIEW').one_or_none() is None or\
-            not session.query(ArticleChange).filter(ArticleChange.title == parsed_data['title']).one_or_none() is None:
-        return 'SUCH USERNAME ALREADY EXIST', '400'
+    if parsed_data['article_id'] == -1:
+        if session.query(Article).filter(
+                Article.title == parsed_data['title'] and Article.title != 'MOD REVIEW').one_or_none() is not None \
+                or session.query(ArticleChange).filter_by(title=parsed_data['title']).one_or_none() is not None:
+            return 'SUCH USERNAME ALREADY EXIST', '400'
 
-    if parsed_data['article_id'] == '-1':
-        new_id = generate_unique_id(Article)
-        session.add(ArticleSchema().load({'title': 'MOD REVIEW',
-                                          'text': 'MOD REVIEW',
-                                          'id': f'{new_id}',
-                                          'author_id': parsed_data['author_id']}
-                                         ))
-        parsed_data['article_id'] = str(new_id)
-
+        temp_art = ArticleSchema().load({'title': 'MOD REVIEW',
+                                         'text': 'MOD REVIEW',
+                                         'author_id': parsed_data['author_id']}
+                                        )
+        session.add(temp_art)
+        session.commit()
+        parsed_data['article_id'] = temp_art.id
     else:
-        found_article = session.query(Article).filter(Article.id == int(parsed_data['article_id'])).one_or_none()
+        found_article = session.query(Article).filter(Article.id == parsed_data['article_id']).one_or_none()
         try:
             ArticleSchema().dump(found_article)
         except ValidationError as error:
@@ -214,14 +218,14 @@ def create_article_changes():
     except ValidationError as error:
         return error.messages, '400'
 
-    article_change.id = generate_unique_id(ArticleChange)
     session.add(article_change)
     session.commit()
 
-    return '200'
+    return '', '200'
 
 
 @main.route('/articleChanges/<change_id>', methods=['GET'])
+@auth.login_required
 def get_article_change(change_id):
     found_article_change = session.query(ArticleChange).filter(ArticleChange.id == change_id).one_or_none()
 
@@ -233,18 +237,26 @@ def get_article_change(change_id):
     if found_article_change is None:
         return 'ARTICLE_CHANGE NOT FOUND', '404'
 
+    if not auth.current_user().is_moderator and found_article_change.author != auth.current_user():
+        return 'You don\'t have permission to view this article', '401'
+
     return article_change, '200'
 
 
 @main.route('/articleChanges/<change_id>', methods=['PUT'])
+@auth.login_required
 def edit_article_change(change_id):
     found_article_change = session.query(ArticleChange).filter(ArticleChange.id == change_id).one_or_none()
 
     if found_article_change is None:
         return 'ARTICLE_CHANGE NOT FOUND', '404'
 
+    if not auth.current_user().is_moderator and found_article_change.author != auth.current_user():
+        return 'You don\'t have permission to edit this article', '401'
+
     data = request.json
-    if not session.query(Article).filter(Article.title == data['title'] and Article.title != 'MOD REVIEW').one_or_none() is None or \
+    if not session.query(Article).filter(
+            Article.title == data['title'] and Article.title != 'MOD REVIEW').one_or_none() is None or \
             not session.query(ArticleChange).filter(ArticleChange.title == data['title']).one_or_none() is None:
         return 'SUCH TITLE ALREADY EXIST', '400'
 
@@ -261,7 +273,11 @@ def edit_article_change(change_id):
 
 
 @main.route('/articleChanges/<change_id>/approve', methods=['GET'])
+@auth.login_required
 def approve_article_change(change_id):
+    if not auth.current_user().is_moderator:
+        return 'You don\'t have required permission', '401'
+
     found_article_change = session.query(ArticleChange).filter(ArticleChange.id == change_id).one_or_none()
 
     try:
@@ -283,11 +299,15 @@ def approve_article_change(change_id):
 
 
 @main.route('/articleChanges/<change_id>', methods=['DELETE'])
+@auth.login_required
 def delete_article_change(change_id):
     found_article_change = session.query(ArticleChange).filter(ArticleChange.id == change_id).one_or_none()
 
     if found_article_change is None:
         return 'ArticleChange not found', '404'
+
+    if not auth.current_user().is_moderator and found_article_change.author != auth.current_user():
+        return 'You don\'t have permission to delete this article', '401'
 
     try:
         ArticleChangeSchema().dump(found_article_change)
@@ -303,7 +323,6 @@ if __name__ == '__main__':
     print(variant)
 
     main.run(debug=True)
-
 
 """
 
