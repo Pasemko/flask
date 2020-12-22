@@ -170,7 +170,7 @@ def delete_article(article_id):
 def articles_changes():
     article_changes_list = session.query(ArticleChange)
     if not auth.current_user().is_moderator:
-        article_changes_list.filter_by(author=auth.current_user())
+        article_changes_list = article_changes_list.filter_by(author=auth.current_user())
 
     if article_changes_list:
         return jsonify(ArticleSchema(many=True).dump(article_changes_list)), '200'
