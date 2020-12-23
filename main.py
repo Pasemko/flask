@@ -39,7 +39,6 @@ def create_user():
     if session.query(User).filter(User.username == user.username).one_or_none() is not None:
         return 'SUCH USERNAME ALREADY EXIST', '400'
 
-    user.is_moderator = False
     user.password = bcrypt.generate_password_hash(request.json['password']).decode('utf-8')
 
     session.add(user)
@@ -186,7 +185,7 @@ def create_article_changes():
     parsed_data = {
         'title': data['title'],
         'text': data['text'],
-        'author_id': data['author_id'],
+        'author_id': auth.current_user().id,
         'article_id': data['article_id'],  # If u wanna create new article put here '-1'!
     }
 
@@ -291,6 +290,7 @@ def approve_article_change(change_id):
     found_article = session.query(Article).filter(Article.id == found_article_change.article_id).one_or_none()
     found_article.title = found_article_change.title
     found_article.text = found_article_change.text
+    found_article.author = found_article_change.author
 
     session.delete(found_article_change)
     session.commit()
