@@ -1,12 +1,18 @@
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Boolean, Text, ARRAY
 from sqlalchemy.orm import scoped_session, sessionmaker, relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.pool import StaticPool
+from sqlalchemy import *
+# engine = create_engine('postgres://postgres:nastya@localhost:5432/postgres')
 
-engine = create_engine('postgresql://postgres:admin@localhost:5432/postgres')
-Session = sessionmaker(bind=engine)
-db_session = scoped_session(Session)
+engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+SessionFactory = sessionmaker(bind=engine)
+Session = scoped_session(SessionFactory)
 
-Base = declarative_base()
+# Session = sessionmaker(bind=engine)
+# db_session = scoped_session(Session)
+metadata = MetaData(engine)
+Base = declarative_base(metadata)
 # Base.metadata.create_all(engine)
 #
 # author_article = Table("author_articles",
@@ -60,3 +66,4 @@ class ArticleChange(Base):
     article_id = Column(Integer, ForeignKey(Article.id, ondelete="CASCADE"))
     article = relationship(Article, back_populates='changes', lazy=False)
 
+Base.metadata.create_all(engine)
