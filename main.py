@@ -1,11 +1,11 @@
 from itertools import product
 from flask import Flask, request, jsonify
 from flask_bcrypt import Bcrypt
-from model import Article, User, ArticleChange, Session
+from model import Article, User, ArticleChange, Session, Base,engine
 from schemas import UserSchema, ArticleSchema, ArticleChangeSchema
 from marshmallow import ValidationError
 from flask_httpauth import HTTPBasicAuth
-
+# from create_models import fillDB
 variant = list(product(
     ('python 3.8.*', 'python 3.7.*', 'python 3.6.*'),
     ('venv + requirements.txt', 'virtualenv + requirements.txt', 'poetry', 'pipenv')))[21 % 12]
@@ -23,10 +23,11 @@ def hello(var):
 
 @auth.verify_password
 def verify_password(username, password):
-    found_user = session.query(User).filter_by(username=username).one_or_none()
+    found_user = session.query(User).filter(User.username==username).one_or_none()
 
     if found_user is not None and bcrypt.check_password_hash(found_user.password, password):
         return found_user
+
 
 
 @main.route('/user', methods=['POST'])
@@ -52,11 +53,11 @@ def create_user():
 def get_user(user_id):
     user_id = int(user_id)
     found_user = session.query(User).filter_by(id=user_id).one_or_none()
-
     try:
         user = UserSchema(exclude=['password']).dump(found_user)
     except ValidationError as error:
         return error.messages, 'INVALID ID', '400'
+
 
     if found_user is None:
         return 'USER NOT FOUND', '404'
@@ -70,19 +71,19 @@ def get_user(user_id):
 @main.route('/user/<user_id>', methods=['DELETE'])
 @auth.login_required
 def delete_user(user_id):
-    if auth.current_user().id != user_id:
-        return 'You can\'t delete this user!', '401'
+
 
     found_user = session.query(User).filter(User.id == user_id).one_or_none()
-
+    # main.logger.info(found_user.id)
+    # print(found_user.id)
     if found_user is None:
         return 'USER NOT FOUND', '404'
-
+    if int(auth.current_user().id) != int(user_id):
+        return 'You can\'t delete this user!', '403'
     try:
         UserSchema().dump(found_user)
     except ValidationError as error:
         return error.messages, 'INVALID ID', '400'
-
     session.delete(found_user)
     session.commit()
     return '', '200'
@@ -93,13 +94,14 @@ def delete_user(user_id):
 def edit_user(user_id):
     user_id = int(user_id)
 
-    if auth.current_user().id != user_id:
-        return 'You can\'t update this user!', '401'
 
     found_user = session.query(User).filter(User.id == user_id).one_or_none()
 
     if found_user is None:
         return 'USER NOT FOUND', '404'
+
+    if int(auth.current_user().id) != int(user_id):
+        return 'You can\'t update this user!', '401'
 
     try:
         UserSchema().dump(found_user)
@@ -131,7 +133,6 @@ def articles():
 @main.route('/articles/<article_id>', methods=['GET'])
 def get_article(article_id):
     found_article = session.query(Article).filter(Article.id == article_id).one_or_none()
-
     try:
         article = ArticleSchema().dump(found_article)
     except ValidationError as error:
@@ -147,7 +148,6 @@ def get_article(article_id):
 @auth.login_required
 def delete_article(article_id):
     found_article = session.query(Article).filter(Article.id == article_id).one_or_none()
-
     try:
         ArticleSchema().dump(found_article)
     except ValidationError as error:
@@ -189,7 +189,7 @@ def create_article_changes():
         'article_id': data['article_id'],  # If u wanna create new article put here '-1'!
     }
 
-    if parsed_data['article_id'] == -1:
+    if int(parsed_data['article_id']) == -1:
         if session.query(Article).filter(
                 Article.title == parsed_data['title'] and Article.title != 'MOD REVIEW').one_or_none() is not None \
                 or session.query(ArticleChange).filter_by(title=parsed_data['title']).one_or_none() is not None:
@@ -227,12 +227,10 @@ def create_article_changes():
 @auth.login_required
 def get_article_change(change_id):
     found_article_change = session.query(ArticleChange).filter(ArticleChange.id == change_id).one_or_none()
-
     try:
         article_change = ArticleChangeSchema().dump(found_article_change)
     except ValidationError as error:
         return error.messages, 'INVALID ID', '400'
-
     if found_article_change is None:
         return 'ARTICLE_CHANGE NOT FOUND', '404'
 
@@ -274,11 +272,8 @@ def edit_article_change(change_id):
 @main.route('/articleChanges/<change_id>/approve', methods=['GET'])
 @auth.login_required
 def approve_article_change(change_id):
-    if not auth.current_user().is_moderator:
-        return 'You don\'t have required permission', '401'
 
     found_article_change = session.query(ArticleChange).filter(ArticleChange.id == change_id).one_or_none()
-
     try:
         ArticleChangeSchema().dump(found_article_change)
     except ValidationError as error:
@@ -286,6 +281,9 @@ def approve_article_change(change_id):
 
     if found_article_change is None:
         return 'ArticleChange not found', '404'
+
+    if not auth.current_user().is_moderator:
+        return 'You don\'t have required permission', '401'
 
     found_article = session.query(Article).filter(Article.id == found_article_change.article_id).one_or_none()
     found_article.title = found_article_change.title
@@ -321,7 +319,8 @@ def delete_article_change(change_id):
 
 if __name__ == '__main__':
     print(variant)
-
+    Base.metadata.create_all(engine)
+    # fillDB()
     main.run(debug=True)
 
 """
